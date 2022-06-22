@@ -23,6 +23,9 @@ options.rescale = 10
 options.dump_filter_graph = false
 options.loopable = false
 options.audio = nil
+options.frame = nil
+options.crf = nil
+options.preset = nil
 OptionParser.new do |opts|
   opts.banner = "Usage: #{$PROGRAM_NAME} [options] input1 [input2...] output"
   opts.on("-h", "--help", "Prints this help") do
@@ -60,6 +63,15 @@ OptionParser.new do |opts|
   end
   opts.on("--audio=[FILE]", "Use FILE as audio track") do |f|
     options.audio = f
+  end
+  opts.on("--frame-image=[FILE]", "Add an overlying frame on top") do |f|
+    options.frame = f
+  end
+  opts.on("--crf=[CRF]", Integer, "x264 CRF") do |n|
+    options.crf = n
+  end
+  opts.on("--preset=[PRESET]", "x264 preset") do |s|
+    options.preset = s
   end
   opts.on("-y", "Overwrite output file without asking") do
     options.y = true
@@ -238,9 +250,18 @@ end
 filter_chains += slides.each_with_index.map do |slide, i|
   input_1 = i > 0 ? "ov#{i-1}" : "black"
   input_2 = "v#{i}"
-  output = i == slides.count - 1 ? "out" : "ov#{i}"
-  overlay_filter = "overlay" + (i == slides.count - 1 ? "=format=yuv420" : "")
+  output = "ov#{i}"
+  overlay_filter = "overlay" + (i == slides.count - 1 && !options.frame ? "=format=yuv420" : "")
   "[#{input_1}][#{input_2}]#{overlay_filter}[#{output}]"
+end
+
+if options.frame
+   n = slides.count
+   input_1 = "ov#{n-1}"
+   input_2 = "#{n}"
+   output = "ov#{n}"
+   overlay_filter = "overlay=format=yuv420"
+   filter_chains += ["[#{input_1}][#{input_2}]#{overlay_filter}[#{output}]"]
 end
 
 # Dump filterchain for debugging
@@ -266,6 +287,7 @@ end
 cmd = [
   "ffmpeg", "-hide_banner", *options.y ? ["-y"] : [], 
   *slides.map { |s| ["-i", s[:file]] }.flatten,
+  *options.frame ? ["-i", options.frame] : [],
   *options.audio ? ["-i", options.audio] : [],
   "-filter_complex", filter_chains.join(";"),
   *(options.loopable ? [
@@ -274,9 +296,12 @@ cmd = [
   ] : [
     "-t", ((options.slide_duration_s-options.fade_duration_s)*slides.count+options.fade_duration_s).to_s
   ]),
-  "-map", "[out]", 
+  "-map", "["+(options.frame ? "ov#{slides.count}" : "ov#{slides.count-1}")+"]", 
   *(options.audio ? ["-map", "#{slides.count}:a"] : []),
-  "-c:v", "libx264", output_file
+  "-c:v", "libx264",
+  *options.crf ? ["-crf", options.crf.to_s] : [],
+  *options.preset ? ["-preset", options.preset] : [],
+  output_file
 ]
 puts cmd.join(" ")
 system(*cmd)
